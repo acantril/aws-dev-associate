@@ -1,5 +1,5 @@
 
-Description:  Animals4Life base VPC Template + Boostrapped Wordpress + RDS MySQL DB (5.7.31) Instance
+Description:  Animals4Life base VPC Template + Boostrapped Wordpress + Aurora DB Cluster (2.07.1) Instance
 Parameters:
   LatestAmiId:
     Description: AMI for Wordpess Instance (default is latest AmaLinux2)
@@ -34,13 +34,12 @@ Parameters:
     MaxLength: '16'
     MinLength: '1'
     Type: String
-  MultiAZ:
-    Description: Multi AZ
-    Type: "String"
-    Default: "False"
-    AllowedValues:
-      - "True"
-      - "False"
+  DatabaseRestoreSnapshot:
+    Description: The snapshot name to restore from - Leave Blank for a new DB, USE ARN for a MIGRATION of a non aurora snapshot or name for aurora
+    Type: String
+Conditions:
+  NoSnapshot:
+    !Equals ['', !Ref DatabaseRestoreSnapshot]
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -387,36 +386,61 @@ Resources:
           FromPort: '3306'
           ToPort: '3306'
           SourceSecurityGroupId: !Ref InstanceSecurityGroup
-  RDSSubnetGroup:
+  DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties: 
-      DBSubnetGroupDescription: A4L rds subnet group
+      DBSubnetGroupDescription: A4L Aurora subnet group
       SubnetIds: 
         - !Ref SubnetDBA
         - !Ref SubnetDBB
         - !Ref SubnetDBC
-  DB:
-    Type: AWS::RDS::DBInstance
+  DBCluster: 
+    Type: "AWS::RDS::DBCluster"
     DeletionPolicy: Delete
-    Properties:
-      AllocatedStorage: "20"
-      DBInstanceClass: "db.t2.micro"
-      DBSubnetGroupName: !Ref RDSSubnetGroup
-      DBName: !Ref DBName
-      Engine: MySQL
-      EngineVersion: "5.7.31"
-      MasterUserPassword: !Ref DBPassword
-      MasterUsername: !Ref DBUser
-      MultiAZ: !Ref MultiAZ
-      StorageType: gp2
+    Properties: 
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      DatabaseName: !If [NoSnapshot,  !Ref DBName, !Ref 'AWS::NoValue' ]
+      Engine: 'aurora-mysql'
+      EngineMode: 'provisioned'
+      EngineVersion: "5.7.mysql_aurora.2.07.1"
+      MasterUserPassword: !If [NoSnapshot, !Ref DBPassword, !Ref 'AWS::NoValue' ]
+      MasterUsername: !If [NoSnapshot, !Ref DBUser, !Ref 'AWS::NoValue' ]
+      SnapshotIdentifier: !If [ NoSnapshot, !Ref 'AWS::NoValue', !Ref DatabaseRestoreSnapshot]
       Tags: 
         - 
           Key: Name
-          Value: "A4L-RDS-DB"
-      VPCSecurityGroups:
-        - !Ref RDSSecurityGroup      
+          Value: "A4L-Aurora-Cluster"
+      VpcSecurityGroupIds:
+        - !Ref RDSSecurityGroup   
+  AuroraInstance1:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    Properties:
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: true
+      DBClusterIdentifier: !Ref DBCluster
+      DBInstanceClass: db.t3.small
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      Engine: 'aurora-mysql'
+      Tags:
+        - Key: Name
+          Value: !Join [ '', [ 'WordPress / ', !Ref 'AWS::StackName' ] ]
+  AuroraInstance2:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    Properties:
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: true
+      DBClusterIdentifier: !Ref DBCluster
+      DBInstanceClass: db.t3.small
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      Engine: 'aurora-mysql'
+      Tags:
+        - Key: Name
+          Value: !Join [ '', [ 'WordPress / ', !Ref 'AWS::StackName' ] ]
   WordpressEC2:
     Type: AWS::EC2::Instance
+    DependsOn: [AuroraInstance1, AuroraInstance2, DBCluster]
     CreationPolicy:
       ResourceSignal:
         Timeout: PT15M
@@ -454,7 +478,7 @@ Resources:
           sed -i "s/'database_name_here'/'${DBName}'/g" wp-config.php
           sed -i "s/'username_here'/'${DBUser}'/g" wp-config.php
           sed -i "s/'password_here'/'${DBPassword}'/g" wp-config.php
-          sed -i "s/'localhost'/'${DB.Endpoint.Address}'/g" wp-config.php
+          sed -i "s/'localhost'/'${DBCluster.Endpoint.Address}'/g" wp-config.php
           # Step 6a - permissions   
           usermod -a -G apache ec2-user   
           chown -R ec2-user:apache /var/www
@@ -480,7 +504,9 @@ Resources:
           source <(php -r 'require("/var/www/html/wp-config.php"); echo("DB_NAME=".DB_NAME."; DB_USER=".DB_USER."; DB_PASSWORD=".DB_PASSWORD."; DB_HOST=".DB_HOST); ')
           SQL_COMMAND="mysql -u $DB_USER -h $DB_HOST -p$DB_PASSWORD $DB_NAME -e"
           OLD_URL=$(mysql -u $DB_USER -h $DB_HOST -p$DB_PASSWORD $DB_NAME -e 'select option_value from wp_options where option_id = 1;' | grep http)
+          echo $OLD_URL
           HOST=$(curl http://169.254.169.254/latest/meta-data/public-ipv4)
+          echo $HOST
           $SQL_COMMAND "UPDATE wp_options SET option_value = replace(option_value, '$OLD_URL', 'http://$HOST') WHERE option_name = 'home' OR option_name = 'siteurl';"
           $SQL_COMMAND "UPDATE wp_posts SET guid = replace(guid, '$OLD_URL','http://$HOST');"
           $SQL_COMMAND "UPDATE wp_posts SET post_content = replace(post_content, '$OLD_URL', 'http://$HOST');"
@@ -490,12 +516,6 @@ Resources:
           chmod 755 /home/ec2-user/update_wp_ip.sh
           echo "/home/ec2-user/update_wp_ip.sh" >> /etc/rc.local
           /home/ec2-user/update_wp_ip.sh
-          
-  WPEIP:
-    Type: AWS::EC2::EIP
-    DependsOn: InternetGatewayAttachment
-    Properties:
-      InstanceId: !Ref WordpressEC2
   InstanceSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
@@ -657,4 +677,4 @@ Resources:
 Outputs:
   dbhost:
     Description: "RDS Endpoint Address"
-    Value: !GetAtt DB.Endpoint.Address
+    Value: !GetAtt DBCluster.Endpoint.Address
