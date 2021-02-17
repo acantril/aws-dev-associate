@@ -8,6 +8,21 @@ Parameters:
     Default: "Cats are the best"
     Type: "String"
 Resources:
+  InstanceSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable SSH and HTTP access via port 22 IPv4 & port 80 IPv4
+      SecurityGroupIngress:
+        - Description: 'Allow SSH IPv4 IN'
+          IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: '0.0.0.0/0'
+        - Description: 'Allow HTTP IPv4 IN'
+          IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: '0.0.0.0/0'
   Bucket:
     Type: 'AWS::S3::Bucket'
   Instance:
@@ -15,6 +30,11 @@ Resources:
     Properties:
       InstanceType: "t2.micro"
       ImageId: !Ref "LatestAmiId"
+      SecurityGroupIds: 
+        - !Ref InstanceSecurityGroup
+      Tags:
+        - Key: Name
+          Value: A4L-UserData Test
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
@@ -24,4 +44,6 @@ Resources:
           sleep 300
           # Continue
           yum install -y httpd
-          echo "<html><head><title>Amazing test page</title></head><body><h1><center>${Message}</center></h1></body></html>"
+          systemctl enable httpd
+          systemctl start httpd
+          echo "<html><head><title>Amazing test page</title></head><body><h1><center>${Message}</center></h1></body></html>" > /var/www/html/index.html

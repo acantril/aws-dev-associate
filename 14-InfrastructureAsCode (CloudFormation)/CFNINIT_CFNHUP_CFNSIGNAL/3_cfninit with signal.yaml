@@ -27,6 +27,26 @@ Resources:
     Type: 'AWS::S3::Bucket'
   Instance:
     Type: 'AWS::EC2::Instance'
+    Metadata:
+      'AWS::CloudFormation::Init':
+        config:
+          packages:
+            yum:
+              httpd: []
+          files:
+            /var/www/html/index.html:
+              content: !Sub |
+                <html><head><title>Amazing test page</title></head><body><h1><center>${Message}</center></h1></body></html>
+          commands:
+            simulatebootstrap:
+              command: "sleep 300"
+          services:
+            sysvinit:
+              httpd:
+                enabled: "true"
+                ensureRunning: "true"
+                files:
+                  - "/var/www/html/index.html"
     CreationPolicy:
       ResourceSignal:
         Timeout: PT15M
@@ -41,13 +61,5 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
-          yum -y update
-          yum -y upgrade
-          # simulate some other processes here
-          sleep 300
-          # Continue
-          yum install -y httpd
-          systemctl enable httpd
-          systemctl start httpd
-          echo "<html><head><title>Amazing test page</title></head><body><h1><center>${Message}</center></h1></body></html>" > /var/www/html/index.html
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackId} --resource Instance --region ${AWS::Region}
           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackId} --resource Instance --region ${AWS::Region}
