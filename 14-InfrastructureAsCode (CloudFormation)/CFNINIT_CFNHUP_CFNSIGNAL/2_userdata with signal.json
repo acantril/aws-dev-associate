@@ -39,6 +39,11 @@
 		},
 		"Instance": {
 			"Type": "AWS::EC2::Instance",
+			"CreationPolicy": {
+				"ResourceSignal": {
+					"Timeout": "PT15M"
+				}
+			},
 			"Properties": {
 				"InstanceType": "t2.micro",
 				"ImageId": {
@@ -57,7 +62,7 @@
 				],
 				"UserData": {
 					"Fn::Base64": {
-						"Fn::Sub": "#!/bin/bash -xe\nyum -y update\nyum -y upgrade\n# simulate some other processes here\nsleep 300\n# Continue\nyum install -y httpd\nsystemctl enable httpd\nsystemctl start httpd\necho \"<html><head><title>Amazing test page</title></head><body><h1><center>${Message}</center></h1></body></html>\" > /var/www/html/index.html\n"
+						"Fn::Sub": "#!/bin/bash -xe\nyum -y update\nyum -y upgrade\n# simulate some other processes here\nsleep 300\n# Continue\nyum install -y httpd\nsystemctl enable httpd\nsystemctl start httpd\necho \"<html><head><title>Amazing test page</title></head><body><h1><center>${Message}</center></h1></body></html>\" > /var/www/html/index.html\n/opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackId} --resource Instance --region ${AWS::Region}\n"
 					}
 				}
 			}
