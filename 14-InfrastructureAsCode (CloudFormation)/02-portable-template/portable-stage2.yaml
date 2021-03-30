@@ -4,7 +4,7 @@ Parameters:
     Description: "Key Pair for EC2"
   AMIID:
     Type: "String"
-    Description: "Key Paur for EC2"
+    Description: "AMI ID for EC2"
 Resources:
   Bucket:
     Type: 'AWS::S3::Bucket'
